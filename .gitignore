@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Virtual environment
+.venv/
+venv/
+
+# Secrets
+.env
+.spotify_cache
+
+# Datasets (large, regenerated from Roboflow exports — do not commit raw images)
+data/raw/
+data/dataset/
+
+# Training artifacts
+runs/
+*.pt
+
+# Downloaded model assets (re-downloadable from vendor CDNs)
+models/
+*.task
+
+# Logs
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
