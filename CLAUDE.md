@@ -18,7 +18,9 @@ You are a senior machine learning engineer and computer vision specialist. This 
 
 ## Handoff Protocol
 
-When the user says **"handoff"**, asks for a handoff, or requests a handoff file, write a file named `HANDOFF.md` at the repo root capturing the full state of the current session so work can resume without context loss. The file must contain:
+**At session start:** if `HANDOFF.md` exists at the repo root, read it before doing anything else. It captures recent-session state (what was completed, pitfalls hit, locked-in decisions, what's queued next) so you can resume without re-asking the user for context. After reading it, also glance at `git log --oneline -10` so you know what's been committed since the handoff was written.
+
+**Writing the handoff:** When the user says **"handoff"**, asks for a handoff, or requests a handoff file, write/overwrite `HANDOFF.md` at the repo root capturing the full state of the current session so work can resume without context loss. The file must contain:
 
 1. **Session goal** — one paragraph: what we were trying to accomplish in this session and why
 2. **Current state of the code** — list every file that exists in the repo with a one-line description of its purpose, marking which are new this session
