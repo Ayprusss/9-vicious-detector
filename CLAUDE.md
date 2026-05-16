@@ -77,8 +77,8 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
   - [x] Dry-run model load verified (no webcam needed)
   - [x] Webcam demo verified live — skeleton overlay tracks user's hand in real-time
 - [ ] **Phase 1:** Data collection
-  - **Decisions locked:** classes = `sign_ysl` / `sign_nine` / `other_hand`; target = ~400 images per class (~1,200 total); Roboflow account will be set up at Phase 2 start
-  - [ ] Write `scripts/collect.py` (webcam loop + hotkey class switch + SPACE-to-save + HUD)
+  - **Decisions locked:** classes = `sign_ysl` / `sign_nine` / `other_hand`; target = ~250 images per class (~750 total) as a starting point — revisit after first training run, may cull near-duplicates or top up failure cases; Roboflow account will be set up at Phase 2 start
+  - [x] Write `scripts/collect.py` (webcam loop + hotkey class switch + SPACE-to-save + HUD + B-key 5s-countdown burst of 10)
   - [ ] User captures images with deliberate variation matrix (lighting, distance, angle, background, clothing, hand orientation, left+right)
   - [ ] Verify class balance and visually skim a sample of saved frames
 - [ ] **Phase 2:** Annotation in Roboflow, export YOLO format
@@ -129,7 +129,7 @@ Each phase below is structured as: **Goal → Steps → Technologies → Focus /
 
 ### Phase 1 — Data Collection
 
-- **Goal:** Build a custom dataset of roughly 600 webcam images (200 per class) covering the diversity the model needs to generalize.
+- **Goal:** Build a custom dataset of roughly 750 webcam images (~250 per class) as a starting point, covering the diversity the model needs to generalize. Treat this as a first pass — after Phase 3 training, revisit with targeted collection on confused classes or culling of near-duplicates.
 - **Steps:**
   1. Decide on three classes: `sign_a` (YSL-style), `sign_b` (Nine Vicious original), `other_hand` (negative class — any other hand pose, prevents false triggers)
   2. Write `scripts/collect.py`: opens webcam, shows current "active class" as an overlay, hotkeys `1` / `2` / `3` switch class, `SPACE` saves current frame to `data/raw/<class>/<UTC-timestamp>.jpg`, `q` quits
@@ -148,7 +148,7 @@ Each phase below is structured as: **Goal → Steps → Technologies → Focus /
   - **Shortcut learning** — models will latch onto the easiest discriminative signal (background color, your shirt, lighting) before learning the actual hand pose. Diversity defeats this.
   - **Class imbalance** — if `sign_a` has 300 and `sign_b` has 100, the model learns to bias toward `sign_a`.
   - **Why a negative class matters** — without `other_hand`, the model thinks every hand is either `sign_a` or `sign_b` and will misfire constantly.
-- **Deliverable:** `data/raw/sign_a/`, `data/raw/sign_b/`, `data/raw/other_hand/` with ~200 JPEGs each.
+- **Deliverable:** `data/raw/sign_ysl/`, `data/raw/sign_nine/`, `data/raw/other_hand/` with ~250 JPEGs each.
 
 ### Phase 2 — Annotation
 
