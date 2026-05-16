@@ -3,7 +3,8 @@
     "allow": [
       "Bash(Get-ChildItem -Path \"D:\\\\coding_files\\\\computer-vision-projects\\\\9-vicious-detector\" -Force)",
       "Bash(Select-Object Name)",
-      "PowerShell(py *)"
+      "PowerShell(py *)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"import py_compile; py_compile.compile\\('scripts/collect.py', doraise=True\\); print\\('OK'\\)\")"
     ]
   }
 }
