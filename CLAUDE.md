@@ -56,7 +56,7 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
 
 **Hardware:** Local **AMD Radeon RX 9060 XT** (RDNA 4, 4 GB reported via WMI but card is 16 GB — WMI under-reports on modern cards). Spotify Premium account available (required for playback control via API).
 
-**Training compute strategy:** AMD GPUs do not natively run CUDA, which the ML ecosystem (PyTorch, Ultralytics) targets first-class. Training will be done on **Google Colab's free NVIDIA T4** rather than locally. Local CPU/AMD is used for everything else (data collection, annotation export, Phase 4 inference, Phase 5 action layer). Inference on the trained model runs fine locally on CPU or via ONNX Runtime DirectML.
+**Training compute strategy:** AMD GPUs do not natively run CUDA, which the ML ecosystem targets first-class. Path chosen: **WSL2 + ROCm + PyTorch-ROCm** on Ubuntu 22.04/24.04 inside WSL2. ROCm is AMD's official compute stack and re-uses the CUDA API surface in PyTorch — so `torch.cuda.is_available()` returns True even though the underlying device is an AMD GPU. RX 9060 XT is RDNA 4 (gfx12xx), supported by ROCm 6.2+. Setup is a one-evening investment (drivers, WSL, ROCm install, PyTorch-ROCm wheel); after that, training is local and fast.
 
 **Architecture chosen:** YOLOv8 or YOLOv11 (Ultralytics) for object detection. Three classes: `sign_a`, `sign_b`, `other_hand` (the third class prevents firing on every random hand pose). Optional Phase 0: MediaPipe Hand Landmarks demo for environment validation and intuition-building.
 
@@ -68,7 +68,7 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
 - **Top-level deps:** see `requirements.txt` — currently `opencv-python==4.13.0.92`, `mediapipe==0.10.35`
 - **Model assets:** `models/` (gitignored). Currently contains `hand_landmarker.task` (~7.8 MB) downloaded from `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task`
 - **OS / shell:** Windows 11, PowerShell. The Bash tool is available for POSIX scripts but most automation here uses PowerShell.
-- **GPU:** AMD Radeon RX 9060 XT — see "Training compute strategy" above. Do NOT attempt `device=0` (CUDA) in Ultralytics on this machine; it will fail.
+- **GPU:** AMD Radeon RX 9060 XT (RDNA 4). Training happens **inside WSL2 with ROCm**, not on the Windows side. From a Windows shell, `torch.cuda.is_available()` will be False; from inside the WSL2 venv with PyTorch-ROCm installed, it will be True (ROCm intentionally exposes the CUDA API). See Phase 3 below for the setup walkthrough.
 
 **Status (update as we progress):**
 - [x] **Phase 0:** Environment setup + MediaPipe webcam demo *(verified working 2026-05-13)*
@@ -93,7 +93,7 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
   - [x] Version generated: 70/20/10 split, 640×640 resize stretch, augmentations (h-flip ON, rotation ±10°, brightness ±15%, blur ≤2px), 3x training outputs
   - [x] Exported as YOLOv8 PyTorch format → extracted to `data/dataset/` (1008 total: 882 train / 84 val / 42 test)
   - [x] `data.yaml` paths fixed from Roboflow's `../train/images` quirk → relative paths
-- [ ] **Phase 3:** Train YOLOv8/v11 with transfer learning **on Google Colab (free NVIDIA T4)** — local AMD GPU cannot run CUDA
+- [ ] **Phase 3:** Train YOLOv8/v11 with transfer learning **locally inside WSL2 + ROCm** on the AMD RX 9060 XT (decision made 2026-05-19, reversing an earlier Colab plan)
 - [ ] **Phase 4:** Inference pipeline + state machine for debouncing
 - [ ] **Phase 5:** Spotify + YouTube action layer
 - [ ] **Phase 6:** Polish (overlay, logging)
@@ -107,7 +107,8 @@ Append-only running log. Each entry: date, what was accomplished, what was learn
 - **Phase 2:** Roboflow project created, all images bounded, two accidental classes purged, version generated with locked-in settings (640×640 stretch, h-flip ON, ±10° rotation, ±15% brightness, ≤2px blur, 3x training outputs, 70/20/10 split). 1008-image YOLOv8 dataset exported to `data/dataset/`.
 - **Pitfall hit:** Roboflow's exported `data.yaml` ships paths as `../train/images` (assumes data.yaml is inside a subfolder one level deeper than where it actually lands after `unzip`). **Resolution:** stripped the `../` from the three split paths in `data/dataset/data.yaml`. **Lesson:** always open the generated `data.yaml` before kicking off training — it's the file Ultralytics reads to find your data, and exporters have export-time assumptions that may not match where you actually put the files.
 - **Hardware reality check:** Discovered mid-session that the local GPU is an **AMD Radeon RX 9060 XT**, not NVIDIA as CLAUDE.md previously claimed. AMD GPUs don't run CUDA, which PyTorch and Ultralytics target first-class. Training compute strategy pivoted to **Google Colab free tier (NVIDIA T4)**; local machine retained for data work, inference, and the action layer. CLAUDE.md updated to reflect this.
-- **Next session starts with Phase 3:** write a Colab-compatible training script, upload `data/dataset/` to Colab (zipped), run training, download `best.pt` back to local `runs/detect/train/weights/`.
+- **Compute decision for Phase 3:** initial recommendation was Google Colab T4 to avoid the AMD-CUDA gap. User pushed back wanting to use the hardware they just upgraded to. Re-evaluated the options — WSL2 + ROCm + PyTorch-ROCm is a legitimate path on RDNA 4 (officially supported by AMD as of ROCm 6.2+). Trade-off accepted: ~evening of setup cost for faster-than-Colab local training and a transferable skill. Path chosen: **WSL2 + ROCm**, not Colab.
+- **Next session starts with Phase 3 setup:** enable WSL2 + Ubuntu, install AMD WSL driver, install ROCm 6.x inside WSL, install PyTorch-ROCm wheel, verify `torch.cuda.is_available()` is True from inside WSL, then install Ultralytics and train.
 
 ### 2026-05-13 — Phase 0 setup
 - Established dev environment: Python 3.12.10 venv, OpenCV + MediaPipe pinned.
@@ -192,28 +193,39 @@ Each phase below is structured as: **Goal → Steps → Technologies → Focus /
   - **Augmentation as synthetic data multiplication** — but aggressive augmentation that creates unrealistic images (extreme rotation, color shifts beyond reality) hurts more than it helps
 - **Deliverable:** `data/dataset/` with `images/{train,val,test}/`, `labels/{train,val,test}/`, and `data.yaml`.
 
-### Phase 3 — Training (on Google Colab, NVIDIA T4)
+### Phase 3 — Training (locally inside WSL2 + ROCm on AMD RX 9060 XT)
 
 - **Goal:** Train a YOLO model that reaches mAP@0.5 ≥ 0.85 on the validation set. Understand the training process well enough to debug it when it underperforms.
-- **Compute:** Local GPU is AMD Radeon RX 9060 XT, which cannot run CUDA. Train on **Google Colab's free T4** instead. Download `best.pt` back to local for Phase 4 inference (CPU is plenty for YOLOv8n inference; ONNX Runtime DirectML can accelerate on the AMD card if needed).
-- **Steps:**
-  1. Zip `data/dataset/` and upload to Colab (or push to Google Drive and mount). Total size should be well under 200 MB.
-  2. In a Colab notebook, set runtime to **GPU (T4)** via Runtime → Change runtime type
-  3. Install: `!pip install ultralytics` (Colab already has CUDA-enabled PyTorch preinstalled)
-  4. Verify GPU: `import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))` — should print `True NVIDIA T4`
-  5. Unzip dataset, fix paths in `data.yaml` if needed (already pre-fixed in our repo)
-  6. Train:
+- **Compute:** Local AMD Radeon RX 9060 XT (RDNA 4), trained inside WSL2 with ROCm 6.x and PyTorch-ROCm. ROCm exposes the CUDA API in PyTorch — code reads `device='cuda'` even though the device is AMD. This is intentional and means YOLO training code is portable across NVIDIA and AMD.
+- **Phase 3a — One-time environment setup:**
+  1. Verify Windows AMD Adrenalin driver is current (Settings → AMD Software → check for updates)
+  2. Enable WSL2 + install Ubuntu 22.04 (or 24.04): `wsl --install -d Ubuntu-22.04` from PowerShell as Administrator. Reboot when prompted, set up Ubuntu user/password on first launch.
+  3. Inside the Ubuntu shell, follow AMD's official ROCm-on-WSL guide (the URL drifts — search "ROCm WSL2 install"). Key steps: add AMD's apt repo, `sudo apt install rocm-dev`, set `LD_LIBRARY_PATH`, add user to `render` + `video` groups.
+  4. Verify ROCm sees the GPU: `rocminfo | grep gfx` should list a `gfx12xx` agent (RDNA 4).
+  5. Create a Python venv inside WSL: `python3 -m venv ~/venvs/9-vicious`, activate with `source ~/venvs/9-vicious/bin/activate`
+  6. Install PyTorch-ROCm from the official wheel index: `pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.x` (use the latest ROCm version PyTorch supports — check pytorch.org/get-started/locally)
+  7. Verify GPU detection: `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"` — should print `True AMD Radeon RX 9060 XT` (or the ROCm name for the card)
+  8. Install Ultralytics: `pip install ultralytics`
+- **Phase 3b — Training run:**
+  1. From inside WSL, access the Windows-side repo at `/mnt/d/coding_files/computer-vision-projects/9-vicious-detector/` (WSL auto-mounts Windows drives under `/mnt/`)
+  2. The `data/dataset/` directory created during Phase 2 is reachable from WSL — no need to copy it
+  3. Write `scripts/train.py`:
      ```python
      from ultralytics import YOLO
-     model = YOLO('yolov8n.pt')  # start from COCO-pretrained nano
-     results = model.train(data='/content/dataset/data.yaml', epochs=100, imgsz=640, batch=16, device=0, patience=20)
+     model = YOLO('yolov8n.pt')  # COCO-pretrained nano
+     results = model.train(
+         data='data/dataset/data.yaml',
+         epochs=100, imgsz=640, batch=16,
+         device=0, patience=20,
+     )
      ```
-  7. Watch the training output: loss curves, mAP per epoch
-  8. After training: open `runs/detect/train/` — review `results.png` (loss/metric curves), `confusion_matrix.png`, and `val_batch*_pred.jpg` (predictions on val images)
-  9. Download `runs/detect/train/weights/best.pt` to local `runs/detect/train/weights/best.pt` for Phase 4
-  10. Identify failure cases by visual inspection, NOT just metrics. If `sign_ysl` is being confused with `sign_nine`, that's a data problem — go back to Phase 1 and collect more discriminating examples.
-  11. Iterate: re-train if needed with adjustments (more epochs, different model size, more data)
-- **Technologies:** Google Colab, Ultralytics (`ultralytics`), PyTorch w/ CUDA on Colab's T4
+  4. Run from WSL: `python scripts/train.py`
+  5. Watch the training output: loss curves, mAP per epoch
+  6. After training: open `runs/detect/train/` — review `results.png` (loss/metric curves), `confusion_matrix.png`, and `val_batch*_pred.jpg` (predictions on val images)
+  7. `best.pt` is written to `runs/detect/train/weights/best.pt` — usable from Windows too since it's on the mounted drive
+  8. Identify failure cases by visual inspection, NOT just metrics. If `sign_ysl` is being confused with `sign_nine`, that's a data problem — go back to Phase 1 and collect more discriminating examples.
+  9. Iterate: re-train if needed with adjustments (more epochs, different model size, more data)
+- **Technologies:** WSL2, Ubuntu 22.04/24.04, ROCm 6.x, Ultralytics (`ultralytics`), PyTorch-ROCm
 - **Focus / What to Teach:**
   - **Transfer learning** — `yolov8n.pt` is pretrained on COCO (80 everyday objects). Even though COCO doesn't include hand signs, the early layers have already learned edges, textures, and shapes that transfer. We only need to retrain the last layers to recognize *our* classes. This is why we can train on 600 images instead of 600,000.
   - **Hyperparameters that matter for us:**
