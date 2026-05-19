@@ -54,7 +54,9 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
 - **Sign A** (YSL-style, similar to Young Thug's): play a specific Nine Vicious track via Spotify Web API
 - **Sign B** (Nine Vicious's original sign): open the music video for a chosen track on YouTube
 
-**Hardware:** Local NVIDIA GPU available for training. Spotify Premium account available (required for playback control via API).
+**Hardware:** Local **AMD Radeon RX 9060 XT** (RDNA 4, 4 GB reported via WMI but card is 16 GB — WMI under-reports on modern cards). Spotify Premium account available (required for playback control via API).
+
+**Training compute strategy:** AMD GPUs do not natively run CUDA, which the ML ecosystem (PyTorch, Ultralytics) targets first-class. Training will be done on **Google Colab's free NVIDIA T4** rather than locally. Local CPU/AMD is used for everything else (data collection, annotation export, Phase 4 inference, Phase 5 action layer). Inference on the trained model runs fine locally on CPU or via ONNX Runtime DirectML.
 
 **Architecture chosen:** YOLOv8 or YOLOv11 (Ultralytics) for object detection. Three classes: `sign_a`, `sign_b`, `other_hand` (the third class prevents firing on every random hand pose). Optional Phase 0: MediaPipe Hand Landmarks demo for environment validation and intuition-building.
 
@@ -66,6 +68,7 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
 - **Top-level deps:** see `requirements.txt` — currently `opencv-python==4.13.0.92`, `mediapipe==0.10.35`
 - **Model assets:** `models/` (gitignored). Currently contains `hand_landmarker.task` (~7.8 MB) downloaded from `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task`
 - **OS / shell:** Windows 11, PowerShell. The Bash tool is available for POSIX scripts but most automation here uses PowerShell.
+- **GPU:** AMD Radeon RX 9060 XT — see "Training compute strategy" above. Do NOT attempt `device=0` (CUDA) in Ultralytics on this machine; it will fail.
 
 **Status (update as we progress):**
 - [x] **Phase 0:** Environment setup + MediaPipe webcam demo *(verified working 2026-05-13)*
@@ -76,13 +79,21 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
   - [x] `scripts/landmark_demo.py` written using the modern Tasks API (`mp.tasks.vision.HandLandmarker`)
   - [x] Dry-run model load verified (no webcam needed)
   - [x] Webcam demo verified live — skeleton overlay tracks user's hand in real-time
-- [ ] **Phase 1:** Data collection
-  - **Decisions locked:** classes = `sign_ysl` / `sign_nine` / `other_hand`; target = ~250 images per class (~750 total) as a starting point — revisit after first training run, may cull near-duplicates or top up failure cases; Roboflow account will be set up at Phase 2 start
-  - [x] Write `scripts/collect.py` (webcam loop + hotkey class switch + SPACE-to-save + HUD + B-key 5s-countdown burst of 10)
-  - [ ] User captures images with deliberate variation matrix (lighting, distance, angle, background, clothing, hand orientation, left+right)
-  - [ ] Verify class balance and visually skim a sample of saved frames
-- [ ] **Phase 2:** Annotation in Roboflow, export YOLO format
-- [ ] **Phase 3:** Train YOLOv8/v11 with transfer learning
+- [x] **Phase 1:** Data collection *(closed 2026-05-19 with 416 raw images: 136 other_hand / 143 sign_nine / 137 sign_ysl)*
+  - **Decisions locked:** classes = `other_hand` / `sign_nine` / `sign_ysl`; original target 250/class softened to 150/class to keep the learning loop short — user explicit framing: "if it works, great; if not, that's the data-collection lesson"
+  - [x] `scripts/collect.py` written (webcam loop + hotkey class switch + SPACE-to-save + BACKSPACE undo + HUD with balance warning)
+  - [x] `scripts/browse.py` written for mid-session QC
+  - [x] `DATA_COLLECTION_NOTES.md` written with high-impact gaps + pre-capture checklist
+  - [x] Captures done across multiple days (timestamps span 2026-05-14 to 2026-05-19)
+  - [x] Class balance within 5% (136/143/137 — tighter than the ±10% goal)
+- [x] **Phase 2:** Annotation in Roboflow, export YOLO format *(closed 2026-05-19)*
+  - [x] Roboflow account + project created (`anthonys-workspace-yiji7/nine-vicious-detector`, version 1)
+  - [x] All 416 images uploaded and bounded; a small number culled during annotation as label-noise (raw count dropped from 450 to 416)
+  - [x] Two accidental classes removed; final `nc: 3` schema confirmed
+  - [x] Version generated: 70/20/10 split, 640×640 resize stretch, augmentations (h-flip ON, rotation ±10°, brightness ±15%, blur ≤2px), 3x training outputs
+  - [x] Exported as YOLOv8 PyTorch format → extracted to `data/dataset/` (1008 total: 882 train / 84 val / 42 test)
+  - [x] `data.yaml` paths fixed from Roboflow's `../train/images` quirk → relative paths
+- [ ] **Phase 3:** Train YOLOv8/v11 with transfer learning **on Google Colab (free NVIDIA T4)** — local AMD GPU cannot run CUDA
 - [ ] **Phase 4:** Inference pipeline + state machine for debouncing
 - [ ] **Phase 5:** Spotify + YouTube action layer
 - [ ] **Phase 6:** Polish (overlay, logging)
@@ -90,6 +101,13 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
 ## Session Log
 
 Append-only running log. Each entry: date, what was accomplished, what was learned, what is pending. Keep entries terse — deep reasoning lives in commit messages and in `HANDOFF.md` when a handoff is requested. When this section grows long, prune the oldest entries.
+
+### 2026-05-19 — Phase 1 + Phase 2 closed in one session
+- **Phase 1:** Closed with 416 raw labeled images (136 other_hand / 143 sign_nine / 137 sign_ysl). User chose to soften the 250/class target to ~150/class to shorten the learn-by-iteration loop — explicit framing of "either the model works, or I learn the data-collection lesson; both are wins."
+- **Phase 2:** Roboflow project created, all images bounded, two accidental classes purged, version generated with locked-in settings (640×640 stretch, h-flip ON, ±10° rotation, ±15% brightness, ≤2px blur, 3x training outputs, 70/20/10 split). 1008-image YOLOv8 dataset exported to `data/dataset/`.
+- **Pitfall hit:** Roboflow's exported `data.yaml` ships paths as `../train/images` (assumes data.yaml is inside a subfolder one level deeper than where it actually lands after `unzip`). **Resolution:** stripped the `../` from the three split paths in `data/dataset/data.yaml`. **Lesson:** always open the generated `data.yaml` before kicking off training — it's the file Ultralytics reads to find your data, and exporters have export-time assumptions that may not match where you actually put the files.
+- **Hardware reality check:** Discovered mid-session that the local GPU is an **AMD Radeon RX 9060 XT**, not NVIDIA as CLAUDE.md previously claimed. AMD GPUs don't run CUDA, which PyTorch and Ultralytics target first-class. Training compute strategy pivoted to **Google Colab free tier (NVIDIA T4)**; local machine retained for data work, inference, and the action layer. CLAUDE.md updated to reflect this.
+- **Next session starts with Phase 3:** write a Colab-compatible training script, upload `data/dataset/` to Colab (zipped), run training, download `best.pt` back to local `runs/detect/train/weights/`.
 
 ### 2026-05-13 — Phase 0 setup
 - Established dev environment: Python 3.12.10 venv, OpenCV + MediaPipe pinned.
@@ -174,24 +192,28 @@ Each phase below is structured as: **Goal → Steps → Technologies → Focus /
   - **Augmentation as synthetic data multiplication** — but aggressive augmentation that creates unrealistic images (extreme rotation, color shifts beyond reality) hurts more than it helps
 - **Deliverable:** `data/dataset/` with `images/{train,val,test}/`, `labels/{train,val,test}/`, and `data.yaml`.
 
-### Phase 3 — Training
+### Phase 3 — Training (on Google Colab, NVIDIA T4)
 
 - **Goal:** Train a YOLO model that reaches mAP@0.5 ≥ 0.85 on the validation set. Understand the training process well enough to debug it when it underperforms.
+- **Compute:** Local GPU is AMD Radeon RX 9060 XT, which cannot run CUDA. Train on **Google Colab's free T4** instead. Download `best.pt` back to local for Phase 4 inference (CPU is plenty for YOLOv8n inference; ONNX Runtime DirectML can accelerate on the AMD card if needed).
 - **Steps:**
-  1. Install: `pip install ultralytics torch torchvision` (the Ultralytics package pulls a compatible PyTorch but pinning explicitly is safer)
-  2. Verify CUDA: `python -c "import torch; print(torch.cuda.is_available())"` — must print `True`
-  3. Create `configs/train.yaml` for hyperparameters
-  4. Write `scripts/train.py`:
+  1. Zip `data/dataset/` and upload to Colab (or push to Google Drive and mount). Total size should be well under 200 MB.
+  2. In a Colab notebook, set runtime to **GPU (T4)** via Runtime → Change runtime type
+  3. Install: `!pip install ultralytics` (Colab already has CUDA-enabled PyTorch preinstalled)
+  4. Verify GPU: `import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))` — should print `True NVIDIA T4`
+  5. Unzip dataset, fix paths in `data.yaml` if needed (already pre-fixed in our repo)
+  6. Train:
      ```python
      from ultralytics import YOLO
      model = YOLO('yolov8n.pt')  # start from COCO-pretrained nano
-     model.train(data='data/dataset/data.yaml', epochs=100, imgsz=640, batch=16, device=0, patience=20)
+     results = model.train(data='/content/dataset/data.yaml', epochs=100, imgsz=640, batch=16, device=0, patience=20)
      ```
-  5. Watch the training output: loss curves, mAP per epoch
-  6. After training: open `runs/detect/train/` — review `results.png` (loss/metric curves), `confusion_matrix.png`, and `val_batch*_pred.jpg` (predictions on val images)
-  7. Identify failure cases by visual inspection, NOT just metrics. If `sign_a` is being confused with `sign_b`, that's a data problem — go back to Phase 1 and collect more discriminating examples.
-  8. Iterate: re-train if needed with adjustments (more epochs, different model size, more data)
-- **Technologies:** Ultralytics (`ultralytics`), PyTorch w/ CUDA, NVIDIA GPU
+  7. Watch the training output: loss curves, mAP per epoch
+  8. After training: open `runs/detect/train/` — review `results.png` (loss/metric curves), `confusion_matrix.png`, and `val_batch*_pred.jpg` (predictions on val images)
+  9. Download `runs/detect/train/weights/best.pt` to local `runs/detect/train/weights/best.pt` for Phase 4
+  10. Identify failure cases by visual inspection, NOT just metrics. If `sign_ysl` is being confused with `sign_nine`, that's a data problem — go back to Phase 1 and collect more discriminating examples.
+  11. Iterate: re-train if needed with adjustments (more epochs, different model size, more data)
+- **Technologies:** Google Colab, Ultralytics (`ultralytics`), PyTorch w/ CUDA on Colab's T4
 - **Focus / What to Teach:**
   - **Transfer learning** — `yolov8n.pt` is pretrained on COCO (80 everyday objects). Even though COCO doesn't include hand signs, the early layers have already learned edges, textures, and shapes that transfer. We only need to retrain the last layers to recognize *our* classes. This is why we can train on 600 images instead of 600,000.
   - **Hyperparameters that matter for us:**
