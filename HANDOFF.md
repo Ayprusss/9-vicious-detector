@@ -1,114 +1,123 @@
 # HANDOFF.md
 
-**Generated:** 2026-05-13 (updated mid-Phase 1)
-**Last completed:** Phase 0 (Environment + MediaPipe webcam demo) — verified working.
-**Currently in:** Phase 1 (Data collection) — collection + browse scripts written, capture not yet started.
-**Up next:** Capture reference frames, then first real collection session.
+**Generated:** 2026-05-19 (end-of-session)
+**Last completed:** Phase 2 (Annotation + Roboflow export) — dataset on disk, `data.yaml` cleaned.
+**Currently in:** Pre-Phase 3 — compute strategy decided, environment not yet built.
+**Up next:** WSL2 + ROCm + PyTorch-ROCm setup, then write `scripts/train.py`, then train.
 
 ## Session goal
 
-Design and build the Phase 1 data-collection workflow:
-- `scripts/collect.py` — webcam loop, hotkey class switching, SPACE-to-save, BACKSPACE undo, HUD with per-class counts and balance warning.
-- `scripts/browse.py` — grid viewer for mid-session QC of captured images.
-- `DATA_COLLECTION_NOTES.md` — high-impact gaps the user must stay mindful of during capture.
+Push the project from "raw annotated images" to "trained `best.pt`-ready environment." Concretely:
 
-No images captured yet. Capture begins next session.
+1. Walk the user through Roboflow's Generate Version flow (preprocessing, augmentation, split)
+2. Get the exported YOLOv8 dataset into the repo and verify its structure
+3. Pick a Phase 3 compute path that fits the user's hardware
+
+Phase 1 and Phase 2 both closed this session. Phase 3 setup is queued for tonight/tomorrow.
 
 ## Current state of the code
 
 | File | Status | Purpose |
 |---|---|---|
-| `CLAUDE.md` | unchanged | Project config — mentor instructions, domain framing, full phase plan, status checklist, session log, handoff protocol |
-| `.gitignore` | unchanged | Ignores `.venv/`, secrets, `data/`, training artifacts, model files, logs, IDE folders |
-| `requirements.txt` | unchanged | `opencv-python==4.13.0.92`, `mediapipe==0.10.35` |
+| `CLAUDE.md` | **edited this session** | Project config — hardware line corrected from "NVIDIA" → "AMD RX 9060 XT", Phase 1+2 marked complete with details, Phase 3 plan rewritten for WSL2+ROCm with a 3a/3b setup split, session log entry added for 2026-05-19 |
+| `HANDOFF.md` | **rewritten this session** | This file |
+| `.gitignore` | unchanged | Already covers `data/raw/`, `data/dataset/`, `.venv/`, `models/`, `runs/`, `*.pt`, `.env`, etc. Verified |
+| `requirements.txt` | unchanged | `opencv-python==4.13.0.92`, `mediapipe==0.10.35` — Phase 3 will require adding `ultralytics`, `torch`, `torchvision` but those will be installed in a **WSL2 venv**, not the existing Windows `.venv/`. The Windows venv is fine as-is for collection/inference work |
 | `scripts/landmark_demo.py` | unchanged | Phase 0 MediaPipe webcam demo |
-| `scripts/collect.py` | **NEW this session** | Phase 1 collection script. Webcam loop, hotkeys `1/2/3` switch class, SPACE saves, BACKSPACE undoes last save (session-only), `q` quits. WYSIWYG mirrored saves. HUD drawn AFTER frame copy → saves are pristine (no overlay contamination). Balance warning at 20+ frames + >20% gap between max/min class. Prints actual capture resolution on startup. |
-| `scripts/browse.py` | **NEW this session** | Grid viewer for QC. 4×3 thumbnails per page, `1/2/3` switches class, `n`/SPACE next page, `p` previous, `q`/ESC quit. Optional CLI arg: starting class. |
-| `DATA_COLLECTION_NOTES.md` | **NEW this session** | High-impact gaps + pre-capture checklist + dataset composition reminders. Read before every capture session. |
-| `models/hand_landmarker.task` | unchanged, gitignored | MediaPipe Hand Landmarker model |
-| `.venv/` | unchanged, gitignored | Python 3.12.10 virtualenv |
+| `scripts/collect.py` | unchanged | Phase 1 collection script |
+| `scripts/browse.py` | unchanged | Mid-session QC grid viewer |
+| `DATA_COLLECTION_NOTES.md` | unchanged | Capture-discipline reminders. Phase 1 done so this is now reference/history |
+| `data/raw/<class>/*.jpg` | **populated, gitignored** | 416 captured frames: 136 other_hand / 143 sign_nine / 137 sign_ysl |
+| `data/dataset/` | **NEW this session, gitignored** | Roboflow YOLOv8 export. 1008 total images (882 train / 84 valid / 42 test). Each split has parallel `images/` and `labels/` directories. `data.yaml` at root |
+| `data/dataset/data.yaml` | **NEW this session, gitignored** | YOLO config. `nc: 3`, `names: ['other_hand', 'sign_nine', 'sign_ysl']`. **Paths were edited** from Roboflow's default `../train/images` → `train/images` (Roboflow assumes its data.yaml lives one level deeper than where unzip places it) |
+| `models/hand_landmarker.task` | unchanged, gitignored | MediaPipe Hand Landmarker model from Phase 0 |
+| `.venv/` | unchanged, gitignored | Python 3.12.10 Windows venv. Used for collection/QC scripts. **Will NOT be the training environment** — training runs inside a separate WSL2 Linux venv |
+| `runs/` | does not exist yet | Will be created by Ultralytics on first training run. Path: `runs/detect/train/weights/best.pt` |
 
 ## Files actively being edited
 
-None — `scripts/collect.py` and `scripts/browse.py` are complete. No images captured yet; `data/raw/` doesn't exist until `collect.py` is run once.
+None. All in-flight edits committed (`d0ac02f`, `da5e72c`). Working tree is clean.
 
 ## What we tried and what failed
 
-Nothing failed this session. All design choices held up under discussion and were confirmed via AskUserQuestion prompts. Carried-over pitfalls from Phase 0 remain documented in `CLAUDE.md`'s Session Log.
+### Initial Phase 3 compute recommendation (overcautious, reversed)
+
+When the user asked "what happens if I have an AMD GPU?", first response defaulted to **Google Colab free T4** as the recommendation, dismissing local AMD options as "driver hell, skip for a learning project." User pushed back appropriately — they had just upgraded from a 2070 SUPER to an RX 9060 XT and wanted to use the hardware. Re-evaluated and reversed the recommendation to **WSL2 + ROCm**, which is a legitimate path on RDNA 4 with ROCm 6.2+.
+
+**Lesson:** Don't reflexively recommend cloud compute when the user has capable local hardware. The AMD ML toolchain has matured significantly in 2024–2025; ROCm-on-WSL2 is officially supported and the setup is a one-evening investment, not a quagmire. Memory saved at `project_gpu_amd.md` to prevent this misframe in future sessions.
+
+### Roboflow `data.yaml` path bug (resolved)
+
+Roboflow exports `data.yaml` with paths like `train: ../train/images`. The `../` assumes the file lives inside a deeper subfolder, but `unzip` lands it at the same level as `train/`. Ultralytics would then look for `data/train/images` instead of `data/dataset/train/images` and fail.
+
+**Resolution:** Stripped `../` from all three split paths. Now reads `train/images`, `val: valid/images`, `test: test/images`. Verified to resolve correctly relative to `data.yaml`'s location.
 
 ## What worked / decisions locked in this session
 
-### `scripts/collect.py` design choices (all explicitly confirmed)
+### Phase 1 closeout
 
-- **Save the mirrored (displayed) frame**, not raw camera frame. WYSIWYG — composition in the preview matches what gets saved. Roboflow's horizontal-flip augmentation in Phase 2 produces the un-mirrored version for free.
-- **BACKSPACE = undo last save** (session-only; only saves made this session can be undone). Re-arms to `None` after one use to prevent double-deletes.
-- **Imbalance warning in HUD** — when any class has ≥20 frames AND (max − min) / max > 0.20, show "BALANCE: X ahead of Y by N%" in a red strip near the bottom. Stays silent until thresholds are met to avoid noisy warnings on tiny counts.
-- **HUD drawn on a `.copy()` taken AFTER frame capture, BEFORE annotation.** Critical: saving an annotated frame would let the model learn "ACTIVE: sign_ysl" text in the corner as a shortcut feature. Worth one extra numpy copy per frame.
-- **UTC microsecond timestamps** for filenames (`YYYYMMDDTHHMMSSffffff.jpg`) — no collisions on rapid bursts, sorts chronologically, embeds capture time.
-- **Capture resolution: 1280×720** requested explicitly. Script reads back actual resolution and prints "requested X, webcam ignored" if the webcam silently downscaled.
-- **Counts initialize by scanning `data/raw/<class>/`** so the per-class display is correct across sessions.
+- **Final raw counts:** 136 other_hand / 143 sign_nine / 137 sign_ysl = **416 images** (~150/class, softened from the original 250/class target)
+- User explicit framing: *"If the model works, great. If it doesn't, I learn the data-collection lesson. Both are wins."* Right mindset for an iterative ML loop.
+- Class balance came out tight: max-to-min gap is 7 frames (~5%), well inside the ±10% tolerance.
 
-### `scripts/browse.py` design choices
+### Phase 2 closeout
 
-- 4×3 grid of 320×180 thumbnails per page (12 per page, matches 16:9 capture aspect).
-- Header: `<class>  |  page X/Y  |  showing A-B of N`.
-- Each thumbnail labeled `#index   ...<last-6-chars-of-timestamp>` for findability.
-- Blocking `cv2.waitKey(0)` so the viewer doesn't peg CPU between key presses.
-- "No images yet" placeholder for empty class folders (handles fresh-clone case).
+- Roboflow project: `anthonys-workspace-yiji7/nine-vicious-detector`, version 1
+- Two accidental classes purged from the schema before generating version → final `nc: 3` is clean
+- **Generate Version settings locked in:**
+  - Preprocessing: Auto-Orient ON, Resize Stretch to 640×640
+  - Augmentations: horizontal flip ON, vertical flip OFF, rotation ±10°, brightness ±15%, blur ≤2px
+  - 3x outputs per training example (only training split is augmented)
+  - 70/20/10 train/val/test split
+- Output: 1008 images (882 train / 84 val / 42 test). Val/test stay un-augmented so metrics remain honest.
 
-### Conceptual decisions reached in conversation (worth re-stating)
+### Phase 3 compute decision
 
-- **`other_hand` should be heavy on hard negatives.** Target mix: ~50% similar/competing hand signs (peace, OK, rock-on, other rap signs), ~20% transitional/mid-motion poses, ~15% random gestures, ~15% mundane (typing/resting). Easy negatives alone teach the model nothing — it needs to see the cases that look like the positives but aren't.
-- **Distribution of context (face/body presence, framing) must match across classes.** Otherwise the model learns shortcuts like "face visible → sign_ysl." Plan: pick ~3 framing styles (close-up hand-only / mid-shot with face / wide off-center) and apply each in similar proportions to all three classes.
-- **Pose variation within a class is the goal, not a problem.** Different angles/tilts/orientations teach pose invariance. Filter rule: if a stranger viewing the photo couldn't tell which sign it is, it's label noise — skip.
-- **In-plane rotation gets some help from Phase 2 augmentation (±10°). Out-of-plane rotation (palm vs. back of hand) must be captured explicitly** — no augmentation can synthesize 3D viewpoint changes from a single 2D image.
-- **Horizontal flip is free via Phase 2 augmentation** — don't waste captures shooting mirror-image versions of poses you already have.
-
-## High-impact gaps documented in `DATA_COLLECTION_NOTES.md`
-
-1. Capture 3–5 reference frames per sign **first** as canonical anchors against form drift.
-2. Spread captures across **3+ sessions on different days** for free distribution variation.
-3. Reserve a **held-out test set** (~50–80 images, ~15–25 per class) under deliberately different conditions; manually assign in Roboflow.
-4. **Back up `data/raw/`** after every session — it's gitignored.
-5. **QC pause** after ~30 frames per class — run `scripts/browse.py` and skim.
-6. **Hand-size floor:** hand should occupy ≥5% of frame (≈200×200 at 1280×720).
-7. **Friend's-hand commitment:** ~40 of 400 per positive class from a friend's hand.
+- **Path chosen: WSL2 + ROCm + PyTorch-ROCm + Ultralytics on Ubuntu 22.04** inside WSL2
+- Rationale: AMD officially supports RDNA 4 on ROCm 6.2+ via WSL2. RX 9060 XT is more capable than Colab's free T4 in raw compute. After ~1 evening of setup, every future training run is fast and local. Skill transfers to other ML projects.
+- ROCm reuses the CUDA API in PyTorch — code that says `device='cuda'` runs on the AMD GPU through ROCm. YOLO training code is portable between NVIDIA and AMD.
 
 ## Next steps (exact order if a fresh session picked this up)
 
-1. **Capture reference frames first.** Create `data/reference/sign_ysl/` and `data/reference/sign_nine/`. With no other goal in mind, capture 3–5 of the cleanest-possible execution of each sign. Either capture via `scripts/collect.py` and manually move the files, or use any image tool. These anchors prevent form drift across multi-day capture.
-2. **First real collection session.** `.venv\Scripts\python.exe scripts\collect.py`. Aim for ~30 per class. Rotate through `1` / `2` / `3` rather than batching by class. Keep the variation matrix in mind.
-3. **QC pause.** `.venv\Scripts\python.exe scripts\browse.py`. Skim each class. Identify and stop any systematic issue before scaling up.
-4. **Back up `data/raw/`** to external storage.
-5. **Day 2 of capture:** different room, different lighting, different outfit.
-6. **Once cumulative count is ~300 per class:** do the held-out test session under deliberately different conditions. Note which filenames belong to the test split (you'll manually assign them in Roboflow during Phase 2).
-7. **Day 3+ until ~400 per class** with friend's-hand frames mixed in for the positive classes.
+1. **Confirm Windows-side prerequisites.** AMD Adrenalin driver current (Settings → AMD Software → updates). Virtualization enabled in BIOS (almost certainly already on, but worth a glance at Task Manager → Performance → CPU → "Virtualization: Enabled").
+2. **Confirm ~50 GB free on C: drive.** WSL2's VHDX lives there by default. Ubuntu + ROCm + PyTorch end up ~15–20 GB.
+3. **Enable WSL2 + install Ubuntu 22.04.** From elevated PowerShell: `wsl --install -d Ubuntu-22.04`. Reboot when prompted. Create Ubuntu user on first launch.
+4. **Install ROCm inside Ubuntu.** Follow AMD's official ROCm-on-WSL guide (URL drifts — search "ROCm WSL2 install" or check rocm.docs.amd.com). Verify with `rocminfo | grep gfx` — should list a `gfx12xx` agent.
+5. **Create a Python venv inside WSL** at `~/venvs/9-vicious`, install PyTorch-ROCm via the official wheel index (`pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.x` — check pytorch.org/get-started/locally for the current ROCm version pin), then `pip install ultralytics`.
+6. **Verify GPU detection** from inside WSL: `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"` — must print `True` and the AMD device name. **This is the green-light moment** — if this fails, the rest won't work.
+7. **Write `scripts/train.py`** (10 lines: `YOLO('yolov8n.pt').train(data='data/dataset/data.yaml', epochs=100, imgsz=640, batch=16, device=0, patience=20)`).
+8. **Run training from inside WSL** at `/mnt/d/coding_files/computer-vision-projects/9-vicious-detector/`. The WSL auto-mount means no dataset copying needed.
+9. **Review `runs/detect/train/`** — `results.png`, `confusion_matrix.png`, `val_batch*_pred.jpg`. `best.pt` is the artifact to keep for Phase 4.
 
 ## Open questions for the user
 
-- Which 2–3 friends are realistic asks for the ~40 friend's-hand frames per positive class?
-- Which ≥3 rooms / lighting setups will you cycle through?
-- Which Spotify track URI and which YouTube video URL are the trigger targets? (Not needed until Phase 5, but easier to lock in while listening to Nine Vicious.)
+None blocking. The Phase 3 compute path is locked, all data is in place. Tonight's session is a guided setup walkthrough — main unknown is whether the user hits driver/version pain during ROCm install. If so, fall back paths in order: `torch-directml` on Windows (slower, requires Ultralytics device patches) → Google Colab T4 (zero setup, ~30 min training).
+
+Long-standing carry-overs (not blocking Phase 3):
+- Which 2–3 friends are realistic asks for ~40 friend's-hand frames per positive class? (Only relevant if Phase 3 training reveals a "this is only your hand" overfitting failure mode that needs Phase 1 re-capture.)
+- Which Spotify track URI and which YouTube video URL are the Phase 5 trigger targets?
 
 ## Environment notes
 
-- **OS:** Windows 11, PowerShell
-- **Python:** 3.12.10 (system also has 3.13.7 — **do not use 3.13**, MediaPipe ships no wheels for it)
-- **Venv:** `.venv/` at repo root. Invoke via `.venv\Scripts\python.exe <script>` (no per-shell activation needed).
-- **Installed (top-level):** `opencv-python==4.13.0.92`, `mediapipe==0.10.35`. NumPy is transitively present via either.
-- **Model file:** `models/hand_landmarker.task` (~7.8 MB, gitignored). Re-downloadable from `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task`.
-- **GPU:** NVIDIA available locally (needed for Phase 3 training).
-- **Spotify Premium:** account available (needed for Phase 5 playback control).
-- **`.gitignore` covers:** `.venv/`, `models/`, `data/raw/`, `data/dataset/`, `.env`, `.spotify_cache`, `runs/`, `*.pt`, `logs/`, IDE folders.
-- **Git state:** Phase 0 work was uncommitted as of the previous handoff. This session adds `scripts/collect.py`, `scripts/browse.py`, `DATA_COLLECTION_NOTES.md`, and a rewrite of `HANDOFF.md` on top of that. User may want to commit before next capture session so disk loss doesn't take all the code with it too.
+- **OS:** Windows 11 Pro, PowerShell as primary shell
+- **Local Python (Windows-side):** 3.12.10 at `.venv/`. Used for `scripts/collect.py`, `scripts/browse.py`, `scripts/landmark_demo.py`. **Not the training environment.**
+- **Training Python (planned, WSL2):** Will be created at `~/venvs/9-vicious` inside Ubuntu 22.04 WSL2. PyTorch-ROCm + Ultralytics installed there. **Do NOT install training deps into the Windows `.venv/`** — they won't see the GPU.
+- **Hardware:** AMD Radeon RX 9060 XT (RDNA 4, gfx12xx). 16 GB VRAM (WMI reports 4 GB but that's a driver-reporting quirk on modern cards).
+- **GPU on Windows:** `torch.cuda.is_available()` will be False from a Windows shell — no CUDA path here. This is expected.
+- **GPU in WSL2 + ROCm:** `torch.cuda.is_available()` will be True (ROCm intentionally exposes the CUDA API surface). `device='cuda'` and `device=0` work and resolve to the AMD GPU.
+- **Spotify Premium:** account ready for Phase 5.
+- **`.gitignore` covers:** `.venv/`, `models/`, `data/raw/`, `data/dataset/`, `.env`, `.spotify_cache`, `runs/`, `*.pt`, `logs/`, IDE folders. Verified clean: all 1008 dataset images and 416 raw images on disk are properly excluded.
+- **Git state:** Working tree clean. Two commits made this session — `d0ac02f data collection complete - updating claude` and `da5e72c additional changes to reflect hardware restrictions`. Everything to do with Phase 1+2 closure and the WSL2+ROCm decision is committed.
+- **Memory saved:** `project_gpu_amd.md` captures the AMD hardware reality + the WSL2+ROCm decision + the "don't repeat the dismissive framing" lesson. Future sessions will read this on startup.
 
-## Variation matrix (target during collection, carried from prior handoff)
+## Variation matrix (historical, Phase 1 complete)
 
-Aim to hit every cell at least once per class:
+Carry-over from earlier handoffs. Phase 1 is closed, but if Phase 3 training reveals a failure mode (e.g., "model only recognizes signs at one lighting level"), the gaps in this matrix tell you where to capture more:
+
 - **Lighting:** bright daylight / dim daylight / lamp-only / overhead artificial / side-lit
 - **Distance:** arm's length / close-up / far from camera / partially out of frame
 - **Angle:** straight on / tilted 15° / tilted 30° / profile / hand rotated
 - **Background:** clean wall / cluttered desk / bed / kitchen / outdoors
 - **Clothing:** ≥2 outfits with different sleeve cuffs
 - **Hand:** both dominant and non-dominant hand
-- **Person:** ideally a friend's hand for ≥10% of frames (concrete plan in `DATA_COLLECTION_NOTES.md`)
+- **Person:** ideally a friend's hand for ≥10% of frames
