@@ -64,11 +64,13 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
 
 **Environment (current state):**
 - **Python:** 3.12.10 — do NOT use 3.13; MediaPipe has not yet shipped wheels for it
-- **Virtualenv:** `.venv/` at repo root (gitignored). Invoke via `.venv\Scripts\python.exe` rather than activating the venv per shell.
-- **Top-level deps:** see `requirements.txt` — currently `opencv-python==4.13.0.92`, `mediapipe==0.10.35`
+- **Virtualenvs (two, both gitignored):** This repo deliberately keeps two separate environments because MediaPipe's `protobuf`/`numpy` pins conflict with the PyTorch/Ultralytics stack, and MediaPipe is only needed for the Phase 0 demo.
+  - **`.venv/`** — Phase 0/1 stack: `opencv-python==4.13.0.92`, `mediapipe==0.10.35` (pinned in `requirements.txt`). CPU only. Used by `landmark_demo.py`, `collect.py`, `browse.py`.
+  - **`.venv-rocm/`** — Phase 3+ stack: PyTorch-ROCm + `ultralytics` (pinned in `requirements-rocm.txt`). GPU-accelerated via ROCm. Used for training and inference. Full setup walkthrough: `ROCM_WINDOWS_SETUP.md`.
+  - Invoke each by full path (e.g., `.venv-rocm\Scripts\python.exe scripts\train.py`) rather than activating per shell.
 - **Model assets:** `models/` (gitignored). Currently contains `hand_landmarker.task` (~7.8 MB) downloaded from `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task`
 - **OS / shell:** Windows 11, PowerShell. The Bash tool is available for POSIX scripts but most automation here uses PowerShell.
-- **GPU:** AMD Radeon RX 9060 XT (RDNA 4). Training happens **inside WSL2 with ROCm**, not on the Windows side. From a Windows shell, `torch.cuda.is_available()` will be False; from inside the WSL2 venv with PyTorch-ROCm installed, it will be True (ROCm intentionally exposes the CUDA API). See Phase 3 below for the setup walkthrough.
+- **GPU:** AMD Radeon RX 9060 XT (RDNA 4, `gfx1200`). Training runs **natively on Windows via PyTorch-ROCm** (decided 2026-05-19, superseding the earlier WSL2 plan — AMD now ships ROCm PyTorch wheels for RDNA 4 on Windows, so WSL2 is no longer required). With the `.venv-rocm/` stack installed, `torch.cuda.is_available()` returns **True** from a normal Windows shell — ROCm intentionally exposes the CUDA API, so `device='cuda'` / `device=0` resolve to the AMD GPU and YOLO training code stays portable. Setup walkthrough: `ROCM_WINDOWS_SETUP.md`. (WSL2 + ROCm 7.2 remains the documented fallback.)
 
 **Status (update as we progress):**
 - [x] **Phase 0:** Environment setup + MediaPipe webcam demo *(verified working 2026-05-13)*
@@ -93,7 +95,9 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
   - [x] Version generated: 70/20/10 split, 640×640 resize stretch, augmentations (h-flip ON, rotation ±10°, brightness ±15%, blur ≤2px), 3x training outputs
   - [x] Exported as YOLOv8 PyTorch format → extracted to `data/dataset/` (1008 total: 882 train / 84 val / 42 test)
   - [x] `data.yaml` paths fixed from Roboflow's `../train/images` quirk → relative paths
-- [ ] **Phase 3:** Train YOLOv8/v11 with transfer learning **locally inside WSL2 + ROCm** on the AMD RX 9060 XT (decision made 2026-05-19, reversing an earlier Colab plan)
+- [~] **Phase 3:** Train YOLOv8/v11 with transfer learning **locally on Windows via PyTorch-ROCm** on the AMD RX 9060 XT (native-Windows path chosen 2026-05-19, superseding the WSL2 plan)
+  - [x] **Phase 3a (env):** `.venv-rocm` created; ROCm 7.2.1 SDK + `torch 2.9.1+rocm7.2.1` + `ultralytics 8.4.51` installed; `torch.cuda.is_available()` → True (RX 9060 XT, 15.9 GB) verified 2026-05-19. Guide: `ROCM_WINDOWS_SETUP.md`
+  - [ ] **Phase 3b (train):** write `scripts/train.py`, run, review metrics (target val mAP@0.5 ≥ 0.85)
 - [ ] **Phase 4:** Inference pipeline + state machine for debouncing
 - [ ] **Phase 5:** Spotify + YouTube action layer
 - [ ] **Phase 6:** Polish (overlay, logging)
@@ -101,6 +105,14 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
 ## Session Log
 
 Append-only running log. Each entry: date, what was accomplished, what was learned, what is pending. Keep entries terse — deep reasoning lives in commit messages and in `HANDOFF.md` when a handoff is requested. When this section grows long, prune the oldest entries.
+
+### 2026-05-19 — Phase 3a: native-Windows ROCm training env stood up
+- **Compute path changed:** WSL2 + ROCm (the previously "locked" plan) → **native-Windows PyTorch-ROCm**. Verified against live AMD docs that AMD now ships ROCm 7.2.1 PyTorch wheels for RDNA 4 (`gfx1200`) on Windows — WSL2 no longer required. Lighter setup; the dataset on D: reads directly. WSL2 + ROCm 7.2 kept only as fallback.
+- **Installed** into a NEW dedicated `.venv-rocm/` (Python 3.12.10), kept separate from the MediaPipe `.venv/` to dodge protobuf/numpy conflicts: ROCm 7.2.1 SDK wheels + `torch 2.9.1+rocm7.2.1` (+ torchvision/torchaudio) + `ultralytics 8.4.51`, all from `repo.radeon.com`.
+- **Go/no-go gate PASSED:** `torch.cuda.is_available()` → True; device = AMD Radeon RX 9060 XT; 15.9 GB VRAM; `torch.version.hip = 7.2.x`; on-GPU matmul ran. Existing driver (Adrenalin 26.5.2) already exceeded the required 26.2.2 — no driver install needed.
+- **Docs added:** `requirements-rocm.txt` (pinned wheel URLs), `ROCM_WINDOWS_SETUP.md` (install guide + troubleshooting); CLAUDE.md Environment/Phase 3/Commands updated for the two-venv layout; `.gitignore` now covers `.venv-rocm/`.
+- **Pitfall avoided:** installing `ultralytics` AFTER torch meant pip saw `torch>=1.8.0` already satisfied by the ROCm build and did NOT pull a CPU-only torch over the top (the classic footgun). Confirmed in the pip log.
+- **Next:** write `scripts/train.py` and kick off the first training run (Phase 3b).
 
 ### 2026-05-19 — Phase 1 + Phase 2 closed in one session
 - **Phase 1:** Closed with 416 raw labeled images (136 other_hand / 143 sign_nine / 137 sign_ysl). User chose to soften the 250/class target to ~150/class to shorten the learn-by-iteration loop — explicit framing of "either the model works, or I learn the data-collection lesson; both are wins."
@@ -193,22 +205,18 @@ Each phase below is structured as: **Goal → Steps → Technologies → Focus /
   - **Augmentation as synthetic data multiplication** — but aggressive augmentation that creates unrealistic images (extreme rotation, color shifts beyond reality) hurts more than it helps
 - **Deliverable:** `data/dataset/` with `images/{train,val,test}/`, `labels/{train,val,test}/`, and `data.yaml`.
 
-### Phase 3 — Training (locally inside WSL2 + ROCm on AMD RX 9060 XT)
+### Phase 3 — Training (locally on Windows via PyTorch-ROCm on AMD RX 9060 XT)
 
 - **Goal:** Train a YOLO model that reaches mAP@0.5 ≥ 0.85 on the validation set. Understand the training process well enough to debug it when it underperforms.
-- **Compute:** Local AMD Radeon RX 9060 XT (RDNA 4), trained inside WSL2 with ROCm 6.x and PyTorch-ROCm. ROCm exposes the CUDA API in PyTorch — code reads `device='cuda'` even though the device is AMD. This is intentional and means YOLO training code is portable across NVIDIA and AMD.
-- **Phase 3a — One-time environment setup:**
-  1. Verify Windows AMD Adrenalin driver is current (Settings → AMD Software → check for updates)
-  2. Enable WSL2 + install Ubuntu 22.04 (or 24.04): `wsl --install -d Ubuntu-22.04` from PowerShell as Administrator. Reboot when prompted, set up Ubuntu user/password on first launch.
-  3. Inside the Ubuntu shell, follow AMD's official ROCm-on-WSL guide (the URL drifts — search "ROCm WSL2 install"). Key steps: add AMD's apt repo, `sudo apt install rocm-dev`, set `LD_LIBRARY_PATH`, add user to `render` + `video` groups.
-  4. Verify ROCm sees the GPU: `rocminfo | grep gfx` should list a `gfx12xx` agent (RDNA 4).
-  5. Create a Python venv inside WSL: `python3 -m venv ~/venvs/9-vicious`, activate with `source ~/venvs/9-vicious/bin/activate`
-  6. Install PyTorch-ROCm from the official wheel index: `pip install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.x` (use the latest ROCm version PyTorch supports — check pytorch.org/get-started/locally)
-  7. Verify GPU detection: `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"` — should print `True AMD Radeon RX 9060 XT` (or the ROCm name for the card)
-  8. Install Ultralytics: `pip install ultralytics`
+- **Compute:** Local AMD Radeon RX 9060 XT (RDNA 4, `gfx1200`), trained **natively on Windows** with ROCm 7.2.1 and PyTorch-ROCm — no WSL2 (AMD now ships ROCm PyTorch wheels for RDNA 4 on Windows). ROCm exposes the CUDA API in PyTorch — code reads `device='cuda'` even though the device is AMD. This is intentional and means YOLO training code is portable across NVIDIA and AMD. WSL2 + ROCm 7.2 is the documented fallback if the native path misbehaves.
+- **Phase 3a — One-time environment setup (full walkthrough in `ROCM_WINDOWS_SETUP.md`):**
+  1. Confirm the AMD graphics driver is >= 26.2.2 (this machine: 26.5.2). The ROCm 7.2.1 PyTorch-on-Windows wheels are built against that driver.
+  2. Create the dedicated GPU venv with Python 3.12: `py -3.12 -m venv .venv-rocm` then `.venv-rocm\Scripts\python.exe -m pip install --upgrade pip`.
+  3. Install the pinned ROCm stack: `.venv-rocm\Scripts\python.exe -m pip install --no-cache-dir -r requirements-rocm.txt`. This pulls AMD's ROCm 7.2.1 SDK wheels, `torch 2.9.1+rocm7.2.1` (+ torchvision/torchaudio), and `ultralytics` from `repo.radeon.com`.
+  4. Verify GPU detection (the go/no-go gate): `.venv-rocm\Scripts\python.exe -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"` — must print `True AMD Radeon RX 9060 XT`. If False, the driver is suspect #1 (see the troubleshooting section of the guide).
 - **Phase 3b — Training run:**
-  1. From inside WSL, access the Windows-side repo at `/mnt/d/coding_files/computer-vision-projects/9-vicious-detector/` (WSL auto-mounts Windows drives under `/mnt/`)
-  2. The `data/dataset/` directory created during Phase 2 is reachable from WSL — no need to copy it
+  1. Work from the repo root in PowerShell — the repo and `data/dataset/` are already on disk; nothing to mount or copy.
+  2. Confirm the interpreter: training must use `.venv-rocm\Scripts\python.exe` (the GPU env), NOT `.venv` (the MediaPipe env).
   3. Write `scripts/train.py`:
      ```python
      from ultralytics import YOLO
@@ -219,13 +227,13 @@ Each phase below is structured as: **Goal → Steps → Technologies → Focus /
          device=0, patience=20,
      )
      ```
-  4. Run from WSL: `python scripts/train.py`
+  4. Run it: `.venv-rocm\Scripts\python.exe scripts\train.py`
   5. Watch the training output: loss curves, mAP per epoch
   6. After training: open `runs/detect/train/` — review `results.png` (loss/metric curves), `confusion_matrix.png`, and `val_batch*_pred.jpg` (predictions on val images)
-  7. `best.pt` is written to `runs/detect/train/weights/best.pt` — usable from Windows too since it's on the mounted drive
+  7. `best.pt` is written to `runs/detect/train/weights/best.pt` — this is the artifact Phase 4 loads
   8. Identify failure cases by visual inspection, NOT just metrics. If `sign_ysl` is being confused with `sign_nine`, that's a data problem — go back to Phase 1 and collect more discriminating examples.
   9. Iterate: re-train if needed with adjustments (more epochs, different model size, more data)
-- **Technologies:** WSL2, Ubuntu 22.04/24.04, ROCm 6.x, Ultralytics (`ultralytics`), PyTorch-ROCm
+- **Technologies:** PyTorch-ROCm (native Windows), ROCm 7.2.1, Ultralytics (`ultralytics`), the AMD RX 9060 XT (`gfx1200`)
 - **Focus / What to Teach:**
   - **Transfer learning** — `yolov8n.pt` is pretrained on COCO (80 everyday objects). Even though COCO doesn't include hand signs, the early layers have already learned edges, textures, and shapes that transfer. We only need to retrain the last layers to recognize *our* classes. This is why we can train on 600 images instead of 600,000.
   - **Hyperparameters that matter for us:**
@@ -330,7 +338,7 @@ Each phase below is structured as: **Goal → Steps → Technologies → Focus /
 All commands assume the current working directory is the repo root and invoke the venv's Python directly — no `Activate.ps1` needed per shell.
 
 ```powershell
-# Recreate the environment from scratch (after fresh clone)
+# Recreate the Phase 0/1 env (.venv: opencv + mediapipe) from scratch
 py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install --upgrade pip
 .venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -346,4 +354,18 @@ Invoke-WebRequest -Uri "https://storage.googleapis.com/mediapipe-models/hand_lan
 .venv\Scripts\python.exe -c "from mediapipe.tasks import python; from mediapipe.tasks.python import vision; lm = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(base_options=python.BaseOptions(model_asset_path='models/hand_landmarker.task'), running_mode=vision.RunningMode.VIDEO, num_hands=2)); print('OK'); lm.close()"
 ```
 
-Phase 1+ commands will be added to this section as those scripts come online.
+```powershell
+# Recreate the Phase 3+ training/inference env (.venv-rocm: PyTorch-ROCm + ultralytics)
+# Requires Python 3.12 and AMD graphics driver >= 26.2.2. See ROCM_WINDOWS_SETUP.md.
+py -3.12 -m venv .venv-rocm
+.venv-rocm\Scripts\python.exe -m pip install --upgrade pip
+.venv-rocm\Scripts\python.exe -m pip install --no-cache-dir -r requirements-rocm.txt
+
+# Verify the AMD GPU is visible to PyTorch (must print: True AMD Radeon RX 9060 XT)
+.venv-rocm\Scripts\python.exe -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+
+# Phase 3 — train YOLO on the AMD GPU
+.venv-rocm\Scripts\python.exe scripts\train.py
+```
+
+Phase 4+ commands will be added to this section as those scripts come online.
