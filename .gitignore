@@ -4,8 +4,11 @@ __pycache__/
 *$py.class
 *.egg-info/
 
-# Virtual environment
+# Virtual environments
+# .venv/      -> Phase 0 stack: opencv + mediapipe (collection/demo scripts)
+# .venv-rocm/ -> Phase 3+ stack: PyTorch-ROCm + ultralytics (training/inference on the AMD GPU)
 .venv/
+.venv-rocm/
 venv/
 
 # Secrets
