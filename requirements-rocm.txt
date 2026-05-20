@@ -1,0 +1,39 @@
+# requirements-rocm.txt
+# ---------------------------------------------------------------------------
+# Phase 3+ TRAINING / INFERENCE stack: PyTorch-ROCm + Ultralytics for the
+# AMD Radeon RX 9060 XT (RDNA 4 / gfx1200), running NATIVELY on Windows.
+#
+# This is NOT the same environment as requirements.txt (opencv + mediapipe,
+# the Phase 0 demo stack). Install into the SEPARATE .venv-rocm/ venv so the
+# heavy ML stack never collides with MediaPipe's protobuf/numpy pins:
+#
+#     py -3.12 -m venv .venv-rocm
+#     .venv-rocm\Scripts\python.exe -m pip install --upgrade pip
+#     .venv-rocm\Scripts\python.exe -m pip install --no-cache-dir -r requirements-rocm.txt
+#
+# HARD REQUIREMENTS (full walkthrough in ROCM_WINDOWS_SETUP.md):
+#   - Python 3.12 ONLY        -> wheels are cp312; 3.11/3.13 have no matching wheel
+#   - AMD graphics driver >= 26.2.2 (Adrenalin Edition)
+#   - Windows x64. These wheels are Windows + ROCm 7.2.1 specific and will NOT
+#     install on Linux/macOS or under a different Python version.
+#
+# AMD ships the ROCm runtime INSIDE these wheels (the full ROCm stack is not
+# yet natively packaged for Windows). Install order matters: SDK before torch.
+# Pinned to ROCm release 7.2.1 from repo.radeon.com.
+# ---------------------------------------------------------------------------
+
+# --- Step 1: ROCm 7.2.1 SDK / runtime (install these FIRST) ---
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_core-7.2.1-py3-none-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_devel-7.2.1-py3-none-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_libraries_custom-7.2.1-py3-none-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz
+
+# --- Step 2: PyTorch built against ROCm 7.2.1 (cp312 / win_amd64) ---
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchvision-0.24.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
+https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
+
+# --- Step 3: training / inference framework (pulls numpy, opencv, pyyaml, etc.) ---
+# Installed AFTER torch so pip sees the ROCm torch already satisfies the
+# dependency and does not pull a CPU-only torch from PyPI over the top.
+ultralytics
