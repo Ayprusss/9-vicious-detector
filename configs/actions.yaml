@@ -1,0 +1,16 @@
+# Phase 5 — sign -> action map.
+#
+# Every sign opens a YouTube music video in the default browser when triggered.
+# Replace each REPLACE_ME with a real YouTube watch URL, e.g.:
+#   url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+#
+# You may point both signs at the SAME video, or give each its own.
+# Until a real URL is set, that sign's trigger is logged but does nothing.
+
+# Sign A (YSL-style gesture)
+sign_ysl:
+  url: "https://www.youtube.com/watch?v=-aZ7QPbP70A"
+
+# Sign B (Nine Vicious's original gesture)
+sign_nine:
+  url: "https://youtu.be/FQODosoEzA8?si=MzWQdFap7xm2zm4S&t=6"
