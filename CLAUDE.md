@@ -50,15 +50,16 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
 ## Project Context
 
 **Project name:** 9-vicious-detector
-**Goal:** Detect two specific hand signs made by underground Atlanta rapper Nine Vicious from a live webcam feed, and trigger an action per sign:
-- **Sign A** (YSL-style, similar to Young Thug's): play a specific Nine Vicious track via Spotify Web API
-- **Sign B** (Nine Vicious's original sign): open the music video for a chosen track on YouTube
+**Goal:** Detect two specific hand signs made by underground Atlanta rapper Nine Vicious from a live webcam feed, and open a YouTube music video in the browser per sign:
+- **Sign A** = `sign_ysl` (YSL-style, similar to Young Thug's): opens a configured YouTube music video
+- **Sign B** = `sign_nine` (Nine Vicious's original sign): opens a configured YouTube music video
+- *(The original plan paired Sign A with the Spotify Web API; on 2026-05-19 it was simplified to YouTube-only for both signs — see the Phase 5 status entry. URLs live in `configs/actions.yaml`.)*
 
-**Hardware:** Local **AMD Radeon RX 9060 XT** (RDNA 4, 4 GB reported via WMI but card is 16 GB — WMI under-reports on modern cards). Spotify Premium account available (required for playback control via API).
+**Hardware:** Local **AMD Radeon RX 9060 XT** (RDNA 4, 4 GB reported via WMI but card is 16 GB — WMI under-reports on modern cards).
 
-**Training compute strategy:** AMD GPUs do not natively run CUDA, which the ML ecosystem targets first-class. Path chosen: **WSL2 + ROCm + PyTorch-ROCm** on Ubuntu 22.04/24.04 inside WSL2. ROCm is AMD's official compute stack and re-uses the CUDA API surface in PyTorch — so `torch.cuda.is_available()` returns True even though the underlying device is an AMD GPU. RX 9060 XT is RDNA 4 (gfx12xx), supported by ROCm 6.2+. Setup is a one-evening investment (drivers, WSL, ROCm install, PyTorch-ROCm wheel); after that, training is local and fast.
+**Training compute strategy:** AMD GPUs do not natively run CUDA, which the ML ecosystem targets first-class. AMD's ROCm stack re-uses the CUDA API surface in PyTorch, so `torch.cuda.is_available()` returns True even though the underlying device is an AMD GPU. Path chosen (2026-05-19): **native-Windows PyTorch-ROCm** — AMD now ships ROCm 7.2.1 PyTorch wheels for RDNA 4 (`gfx1200`) on Windows, so the earlier WSL2 plan was dropped (kept only as a documented fallback). Setup is a one-time install (driver check ≥ 26.2.2, dedicated venv, ROCm wheels); after that, training is local and fast. Full walkthrough: `ROCM_WINDOWS_SETUP.md`.
 
-**Architecture chosen:** YOLOv8 or YOLOv11 (Ultralytics) for object detection. Three classes: `sign_a`, `sign_b`, `other_hand` (the third class prevents firing on every random hand pose). Optional Phase 0: MediaPipe Hand Landmarks demo for environment validation and intuition-building.
+**Architecture chosen:** YOLOv8 (Ultralytics) for object detection — trained `yolov8n` (nano). Three classes: `sign_ysl`, `sign_nine`, `other_hand` (the third is a negative class that prevents firing on every random hand pose). Phase 0 used a MediaPipe Hand Landmarks demo for environment validation and intuition-building.
 
 **Key technical risk to keep in mind:** Sign A and Sign B may be visually similar (both are hand gestures, and Sign A resembles the YSL sign). This is a fine-grained classification problem, not just detection. Implication: collect more data per class than a typical 2-class problem (target ~200+ images per sign), with deliberate variety in angle/distance/lighting.
 
@@ -95,16 +96,27 @@ When making decisions — model choice, hyperparameters, dataset structure, trai
   - [x] Version generated: 70/20/10 split, 640×640 resize stretch, augmentations (h-flip ON, rotation ±10°, brightness ±15%, blur ≤2px), 3x training outputs
   - [x] Exported as YOLOv8 PyTorch format → extracted to `data/dataset/` (1008 total: 882 train / 84 val / 42 test)
   - [x] `data.yaml` paths fixed from Roboflow's `../train/images` quirk → relative paths
-- [~] **Phase 3:** Train YOLOv8/v11 with transfer learning **locally on Windows via PyTorch-ROCm** on the AMD RX 9060 XT (native-Windows path chosen 2026-05-19, superseding the WSL2 plan)
+- [x] **Phase 3:** Train YOLOv8/v11 with transfer learning **locally on Windows via PyTorch-ROCm** on the AMD RX 9060 XT (native-Windows path chosen 2026-05-19, superseding the WSL2 plan)
   - [x] **Phase 3a (env):** `.venv-rocm` created; ROCm 7.2.1 SDK + `torch 2.9.1+rocm7.2.1` + `ultralytics 8.4.51` installed; `torch.cuda.is_available()` → True (RX 9060 XT, 15.9 GB) verified 2026-05-19. Guide: `ROCM_WINDOWS_SETUP.md`
-  - [ ] **Phase 3b (train):** write `scripts/train.py`, run, review metrics (target val mAP@0.5 ≥ 0.85)
-- [ ] **Phase 4:** Inference pipeline + state machine for debouncing
-- [ ] **Phase 5:** Spotify + YouTube action layer
-- [ ] **Phase 6:** Polish (overlay, logging)
+  - [x] **Phase 3b (train):** `scripts/train.py` written; first run trained `yolov8n.pt` → early-stopped at epoch 90 (best @70), ~22 min on the AMD GPU. **Val mAP@0.5 = 0.992** (target was 0.85), all classes ≥0.98. Crucially, the feared `sign_nine` ↔ `sign_ysl` confusion did NOT appear in the matrix. Artifact: `runs/detect/train/weights/best.pt`
+- [x] **Phase 4:** Inference pipeline + state machine for debouncing *(closed 2026-05-19)*
+  - [x] `detector/inference.py` (`HandSignDetector` → `list[Detection]`), `detector/state_machine.py` (15-frame window, 12-vote consensus, 0.7 conf floor, 5s cooldown, only `sign_nine`/`sign_ysl` fire), `scripts/run.py` (webcam loop + HUD + print-only actions). Headless smoke test of trigger logic + weight load all passed; live webcam run confirmed by user.
+  - ⚠️ **KNOWN MODEL LIMITATIONS (accepted, not bugs to chase):** live testing surfaced two real weaknesses inherited from the small single-person dataset: (1) **the user's face is sometimes detected as `sign_nine`** (a false-positive failure mode the negative class didn't fully suppress); (2) **some angles/orientations of `sign_nine` and `sign_ysl` are missed** (recall gaps on poses underrepresented in training). These match the val-metric caveat we flagged — the 0.992 mAP was optimistic because val ≈ train conditions (one person, one room, near-duplicate burst frames). **This is acceptable by design:** the project is an intentionally personal/"gag" build for the user alone, NOT for universal or multi-person use, so generalization gaps don't block it. Dataset-improvement path captured for later in `DATASET_IMPROVEMENT_TODO.md`.
+- [x] **Phase 5:** Action layer — **YouTube-only** *(closed 2026-05-19; Spotify dropped)*
+  - **Design change:** original plan was `sign_ysl`→Spotify track, `sign_nine`→YouTube. User simplified: **both signs open a YouTube music video** in the browser. No Spotify → no `spotipy`, no OAuth, no `.env` secrets. Stdlib `webbrowser` only.
+  - [x] `actions/youtube_action.py` (`open_video(url)`), `actions/dispatcher.py` (`ActionDispatcher` reads `configs/actions.yaml`, routes class→URL, skips+logs on unset/placeholder URLs), `configs/actions.yaml` (per-sign URL map). Wired into `scripts/run.py` `on_trigger`. Routing + skip-path smoke test passed; `run.py` byte-compiles.
+  - [ ] **Remaining manual step (user):** replace the two `REPLACE_ME` placeholders in `configs/actions.yaml` with real YouTube watch URLs (same video for both, or one each). Until then triggers log but open nothing.
+- [ ] **Phase 6:** Polish (overlay, logging) — *optional; project considered functionally complete*
 
 ## Session Log
 
 Append-only running log. Each entry: date, what was accomplished, what was learned, what is pending. Keep entries terse — deep reasoning lives in commit messages and in `HANDOFF.md` when a handoff is requested. When this section grows long, prune the oldest entries.
+
+### 2026-05-19 — Phase 3b + Phase 4 closed; model limitations accepted
+- **Phase 3b (train):** wrote `scripts/train.py` (transfer learning from `yolov8n.pt`, `batch=16`, `device=0`, `patience=20`). First run early-stopped at epoch 90 (best @70), ~22 min on the AMD GPU. **Val mAP@0.5 = 0.992** (target 0.85); per-class all ≥0.98. Confusion matrix: feared `sign_nine`↔`sign_ysl` confusion absent; only a few background false-positives. **AMP self-check failed on ROCm/RDNA4 → auto-disabled, trained FP32** (safe fallback, not an error).
+- **Phase 4 (inference):** built `detector/inference.py` + `detector/state_machine.py` + `scripts/run.py`. Two-layer split (stateless perception / stateful decision). Headless smoke test passed all gates: consensus fires, cooldown suppresses, negative class never fires, jitter (8/7) stays below the 12-vote bar, sub-0.7 detections don't vote, `best.pt` loads & predicts.
+- **Live run revealed real limits (accepted):** face → sometimes `sign_nine` (false positive); some `sign_nine`/`sign_ysl` angles missed (recall gaps). Confirms the val numbers were optimistic (val ≈ train: one person, one room, burst near-duplicates leaking across split). **User decision: acceptable** — this is a personal/gag project for the user alone, not multi-person/universal use. Limitations documented in CLAUDE.md Phase 4 status; improvement backlog written to `DATASET_IMPROVEMENT_TODO.md`.
+- **Phase 5 (actions):** plan simplified from Spotify + YouTube to **YouTube-only** (user decision — both signs open a YouTube music video; no `spotipy`/OAuth/`.env`). Built `actions/youtube_action.py` + `actions/dispatcher.py` + `configs/actions.yaml`, wired into `scripts/run.py`; routing + skip-path smoke test passed. **Remaining:** user fills the two `REPLACE_ME` URLs in `configs/actions.yaml`. Project functionally complete (Phase 6 polish optional).
 
 ### 2026-05-19 — Phase 3a: native-Windows ROCm training env stood up
 - **Compute path changed:** WSL2 + ROCm (the previously "locked" plan) → **native-Windows PyTorch-ROCm**. Verified against live AMD docs that AMD now ships ROCm 7.2.1 PyTorch wheels for RDNA 4 (`gfx1200`) on Windows — WSL2 no longer required. Lighter setup; the dataset on D: reads directly. WSL2 + ROCm 7.2 kept only as fallback.
@@ -282,6 +294,8 @@ Each phase below is structured as: **Goal → Steps → Technologies → Focus /
 
 ### Phase 5 — Action Layer
 
+> **As built (2026-05-19): YouTube-only.** The plan below (Spotify + YouTube, OAuth, `.env` secrets) is kept for historical/teaching reference, but the implemented action layer is simpler: **both signs open a YouTube music video** via the stdlib `webbrowser` module — no Spotify, no `spotipy`, no OAuth, no secrets. See `actions/youtube_action.py`, `actions/dispatcher.py`, and `configs/actions.yaml`. The OAuth 2.0 teaching notes below still apply if Spotify is ever added back.
+
 - **Goal:** Wire real Spotify playback and YouTube launching to the trigger events.
 - **Steps:**
   1. Register a Spotify app at `developer.spotify.com/dashboard`. Note `client_id`, `client_secret`. Set Redirect URI to `http://localhost:8888/callback`.
@@ -366,6 +380,10 @@ py -3.12 -m venv .venv-rocm
 
 # Phase 3 — train YOLO on the AMD GPU
 .venv-rocm\Scripts\python.exe scripts\train.py
+
+# Phase 4/5 — live webcam inference + YouTube actions
+# (fill in real URLs in configs/actions.yaml first; press q to quit)
+.venv-rocm\Scripts\python.exe scripts\run.py
 ```
 
-Phase 4+ commands will be added to this section as those scripts come online.
+All phase scripts are now in place: `scripts/landmark_demo.py` (Phase 0); `scripts/collect.py` + `scripts/browse.py` (Phase 1); `scripts/train.py` (Phase 3); `detector/` + `actions/` + `scripts/run.py` (Phase 4/5).
